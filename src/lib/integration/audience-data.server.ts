@@ -50,6 +50,10 @@ export type CustomerAgg = {
 };
 
 const PAGE = 1000;
+// Keep `.in(order_id, ids)` URLs comfortably below common proxy/PostgREST URL
+// limits. A 500 UUID batch can exceed 16 KB once encoded by Supabase JS.
+const ITEM_ORDER_BATCH = 100;
+const ITEM_BATCH_CONCURRENCY = 4;
 
 async function fetchAllOrders(
   sb: ReturnType<typeof getAudienceSupabaseServer>,
@@ -83,22 +87,33 @@ async function fetchAllItems(
   const out: ItemRow[] = [];
   // Filter via merchant-scoped orders. Legacy order_items can have a null
   // clover_merchant_id, which made the old merchant filter hide their products.
-  for (let start = 0; start < orderIds.length; start += 500) {
-    const ids = orderIds.slice(start, start + 500);
-    let off = 0;
-    for (;;) {
-      const { data, error } = await sb
-        .from("order_items")
-        .select(
-          "clover_order_id,order_id,item_name,clover_item_id,category,quantity,line_total_cents,created_time",
-        )
-        .in("order_id", ids)
-        .range(off, off + PAGE - 1);
-      if (error) throw new Error(`Audience order_items query failed: ${error.message}`);
-      out.push(...(data ?? []));
-      if (!data || data.length < PAGE) break;
-      off += PAGE;
-    }
+  const batches: string[][] = [];
+  for (let start = 0; start < orderIds.length; start += ITEM_ORDER_BATCH) {
+    batches.push(orderIds.slice(start, start + ITEM_ORDER_BATCH));
+  }
+
+  for (let start = 0; start < batches.length; start += ITEM_BATCH_CONCURRENCY) {
+    const rowsByBatch = await Promise.all(
+      batches.slice(start, start + ITEM_BATCH_CONCURRENCY).map(async (ids) => {
+        const batchRows: ItemRow[] = [];
+        let off = 0;
+        for (;;) {
+          const { data, error } = await sb
+            .from("order_items")
+            .select(
+              "clover_order_id,order_id,item_name,clover_item_id,category,quantity,line_total_cents,created_time",
+            )
+            .in("order_id", ids)
+            .range(off, off + PAGE - 1);
+          if (error) throw new Error(`Audience order_items query failed: ${error.message}`);
+          batchRows.push(...(data ?? []));
+          if (!data || data.length < PAGE) break;
+          off += PAGE;
+        }
+        return batchRows;
+      }),
+    );
+    for (const rows of rowsByBatch) out.push(...rows);
   }
   return out;
 }
