@@ -193,7 +193,9 @@ async function getBackfillCursor(): Promise<string | null> {
 async function saveBackfillCursor(cursor: string | null): Promise<void> {
   try {
     const sb = getSupabaseServer();
+    const merchantId = getIntegrationConfig().clover.merchantId;
     await sb.from("sync_runs").insert({
+      clover_merchant_id: merchantId,
       kind: "customer-backfill",
       status: cursor ? "paused" : "completed",
       paused_at_cursor: cursor,
