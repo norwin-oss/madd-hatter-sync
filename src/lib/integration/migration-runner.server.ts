@@ -3,7 +3,7 @@
 //
 // After the one-time bootstrap (supabase/bootstrap.sql creates the
 // `schema_migrations` tracking table + the `run_migration_sql` RPC), this
-// module runs every migration file (0001–0011) that has not yet been applied.
+// module runs every migration file (0001–0012) that has not yet been applied.
 // It is safe and cheap to call on every cold start: it does one SELECT to
 // list applied migrations, then only executes the missing ones.
 //
@@ -32,6 +32,7 @@ import m0008 from "../../../supabase/migrations/0008_match_audit.sql?raw";
 import m0009 from "../../../supabase/migrations/0009_product_mapping_and_logs.sql?raw";
 import m0010 from "../../../supabase/migrations/0010_backfill_cursor.sql?raw";
 import m0011 from "../../../supabase/migrations/0011_admin_allowlist.sql?raw";
+import m0012 from "../../../supabase/migrations/0012_sync_runs_updated_at.sql?raw";
 
 const MIGRATIONS: { id: string; sql: string }[] = [
   { id: "0001_init", sql: m0001 },
@@ -45,6 +46,7 @@ const MIGRATIONS: { id: string; sql: string }[] = [
   { id: "0009_product_mapping_and_logs", sql: m0009 },
   { id: "0010_backfill_cursor", sql: m0010 },
   { id: "0011_admin_allowlist", sql: m0011 },
+  { id: "0012_sync_runs_updated_at", sql: m0012 },
 ];
 
 /**

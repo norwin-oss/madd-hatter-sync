@@ -242,7 +242,7 @@ export async function getSyncedContacts(limit = 1000): Promise<{
     sb
       .from("purchase_tags")
       .select(
-        "clover_customer_id, status, verification_status, tag_label, item_name, normalized_item_name",
+        "clover_customer_id, status, verification_status, tag_label, normalized_item_name",
       )
       .in("clover_customer_id", customerIds),
     sb
@@ -267,7 +267,9 @@ export async function getSyncedContacts(limit = 1000): Promise<{
     if (t.verification_status === "verified" || t.status === "applied") {
       cur.verified++;
     }
-    const label = t.tag_label || (t.item_name ? `Clover - Purchased: ${t.item_name}` : null);
+    const label =
+      t.tag_label ||
+      (t.normalized_item_name ? `Clover - Purchased: ${t.normalized_item_name}` : null);
     if (label) cur.labels.add(label);
     tagStatsMap.set(t.clover_customer_id, cur);
   }
