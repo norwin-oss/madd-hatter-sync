@@ -16,6 +16,17 @@ export function getSupabaseServer(): SupabaseClient {
   });
 }
 
+/** Audience reports only need Supabase and a merchant ID, not Clover API or GHL secrets. */
+export function getAudienceSupabaseServer(): SupabaseClient {
+  const url = (process.env["SUPABASE_URL"] ?? "").trim();
+  const secretKey = (process.env["SUPABASE_SECRET_KEY"] ?? "").trim();
+  const missing = [!url && "SUPABASE_URL", !secretKey && "SUPABASE_SECRET_KEY"].filter(Boolean);
+  if (missing.length) throw new Error(`Missing audience database secrets: ${missing.join(", ")}`);
+  return createClient(url, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export function getSupabaseAnon(): SupabaseClient {
   const cfg = getIntegrationConfig();
   // Browser-safe publishable key for client-side auth flows.

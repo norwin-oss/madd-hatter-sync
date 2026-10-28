@@ -2,8 +2,7 @@
 // Fetches all orders, order_items, customers, and customer_mappings for the
 // merchant (paginated to avoid the 1000-row PostgREST cap) and builds a
 // per-customer aggregate used by the audience predicates.
-import { getSupabaseServer } from "./supabase.server";
-import { getIntegrationConfig } from "./config.server";
+import { getAudienceSupabaseServer } from "./supabase.server";
 import { wallParts, wallDate, matchEventDate } from "./audience-dates.server";
 
 export type OrderRow = {
@@ -53,7 +52,7 @@ export type CustomerAgg = {
 const PAGE = 1000;
 
 async function fetchAllOrders(
-  sb: ReturnType<typeof getSupabaseServer>,
+  sb: ReturnType<typeof getAudienceSupabaseServer>,
   mid: string,
 ): Promise<OrderRow[]> {
   const out: OrderRow[] = [];
@@ -68,8 +67,7 @@ async function fetchAllOrders(
       .order("created_time", { ascending: true })
       .range(off, off + PAGE - 1);
     if (error) {
-      console.warn(`Audience: orders query warning: ${error.message}`);
-      break;
+      throw new Error(`Audience orders query failed: ${error.message}`);
     }
     out.push(...(data ?? []));
     if (!data || data.length < PAGE) break;
@@ -79,27 +77,28 @@ async function fetchAllOrders(
 }
 
 async function fetchAllItems(
-  sb: ReturnType<typeof getSupabaseServer>,
-  mid: string,
+  sb: ReturnType<typeof getAudienceSupabaseServer>,
+  orderIds: string[],
 ): Promise<ItemRow[]> {
   const out: ItemRow[] = [];
-  let off = 0;
-  for (;;) {
-    const { data, error } = await sb
-      .from("order_items")
-      .select(
-        "clover_order_id,order_id,item_name,clover_item_id,category,quantity,line_total_cents,created_time",
-      )
-      .eq("clover_merchant_id", mid)
-      .order("created_time", { ascending: true })
-      .range(off, off + PAGE - 1);
-    if (error) {
-      console.warn(`Audience: order_items query warning: ${error.message}`);
-      break;
+  // Filter via merchant-scoped orders. Legacy order_items can have a null
+  // clover_merchant_id, which made the old merchant filter hide their products.
+  for (let start = 0; start < orderIds.length; start += 500) {
+    const ids = orderIds.slice(start, start + 500);
+    let off = 0;
+    for (;;) {
+      const { data, error } = await sb
+        .from("order_items")
+        .select(
+          "clover_order_id,order_id,item_name,clover_item_id,category,quantity,line_total_cents,created_time",
+        )
+        .in("order_id", ids)
+        .range(off, off + PAGE - 1);
+      if (error) throw new Error(`Audience order_items query failed: ${error.message}`);
+      out.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+      off += PAGE;
     }
-    out.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
-    off += PAGE;
   }
   return out;
 }
@@ -110,16 +109,13 @@ export async function loadAggregates(): Promise<{
   warnings: string[];
 }> {
   const warnings: string[] = [];
-  let sb: ReturnType<typeof getSupabaseServer> | null = null;
+  let sb: ReturnType<typeof getAudienceSupabaseServer> | null = null;
   let mid = "";
   try {
-    sb = getSupabaseServer();
-    mid = getIntegrationConfig().clover.merchantId;
+    sb = getAudienceSupabaseServer();
+    mid = (process.env["CLOVER_MERCHANT_ID"] ?? "").trim();
     if (!mid) {
-      warnings.push(
-        "No Clover merchant ID configured (CLOVER_MERCHANT_ID). Add it in Settings → Secrets.",
-      );
-      return { byCustomer: new Map(), allCustomers: [], warnings };
+      throw new Error("Missing CLOVER_MERCHANT_ID");
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
@@ -131,7 +127,8 @@ export async function loadAggregates(): Promise<{
   let items: ItemRow[] = [];
   try {
     if (sb && mid) {
-      [orders, items] = await Promise.all([fetchAllOrders(sb, mid), fetchAllItems(sb, mid)]);
+      orders = await fetchAllOrders(sb, mid);
+      items = await fetchAllItems(sb, orders.map((o) => o.id));
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
