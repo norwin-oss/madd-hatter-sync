@@ -692,9 +692,7 @@ export async function findRecordByPurchaseReference(
 export async function getGhlContactById(contactId: string): Promise<GhlContact | null> {
   const cfg = getIntegrationConfig();
   try {
-    const json = await ghlFetch(
-      `/contacts/${contactId}?locationId=${cfg.ghl.locationId}`,
-    );
+    const json = await ghlFetch(`/contacts/${contactId}?locationId=${cfg.ghl.locationId}`);
     const c = json?.contact ?? json;
     if (!c?.id) return null;
     return mapContact(c);

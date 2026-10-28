@@ -117,11 +117,7 @@ export type CloverRecentOrderSummary = {
 };
 
 export type MatchDecision =
-  | "matched_existing"
-  | "will_create"
-  | "held_for_review"
-  | "anonymous"
-  | "auto_create";
+  "matched_existing" | "will_create" | "held_for_review" | "anonymous" | "auto_create";
 
 export type CustomerMatchPreview = {
   decision: MatchDecision;

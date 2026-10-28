@@ -128,7 +128,10 @@ export async function loadAggregates(): Promise<{
   try {
     if (sb && mid) {
       orders = await fetchAllOrders(sb, mid);
-      items = await fetchAllItems(sb, orders.map((o) => o.id));
+      items = await fetchAllItems(
+        sb,
+        orders.map((o) => o.id),
+      );
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
