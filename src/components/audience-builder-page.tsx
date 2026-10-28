@@ -67,7 +67,9 @@ export function AudienceBuilderPage() {
         rawText.includes("<html") ||
         rawText.includes("Internal server error")
       ) {
-        setError("The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.");
+        setError(
+          "The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.",
+        );
         setResult(null);
         return;
       }
@@ -78,7 +80,9 @@ export function AudienceBuilderPage() {
       if (res && typeof res === "object" && "error" in res && res.error) {
         const errorText = String(res.error);
         if (errorText.includes("<!DOCTYPE") || errorText.includes("<html")) {
-          setError("The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.");
+          setError(
+            "The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.",
+          );
         } else {
           setError(errorText);
         }
@@ -95,7 +99,9 @@ export function AudienceBuilderPage() {
         msg.includes("<html") ||
         msg.includes("Internal server error")
       ) {
-        setError("The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.");
+        setError(
+          "The audience request failed on the server (HTTP 500). Check the server logs for the underlying error.",
+        );
       } else {
         setError(msg || "Failed to build audience.");
       }

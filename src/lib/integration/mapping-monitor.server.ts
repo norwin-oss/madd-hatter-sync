@@ -241,9 +241,7 @@ export async function getSyncedContacts(limit = 1000): Promise<{
     sb.from("customers").select("*").in("clover_customer_id", customerIds).limit(5000),
     sb
       .from("purchase_tags")
-      .select(
-        "clover_customer_id, status, verification_status, tag_label, normalized_item_name",
-      )
+      .select("clover_customer_id, status, verification_status, tag_label, normalized_item_name")
       .in("clover_customer_id", customerIds),
     sb
       .from("orders")

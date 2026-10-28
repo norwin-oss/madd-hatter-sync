@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as PendingApprovalRouteImport } from './routes/pending-approval'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
+import { Route as ApiAudienceDiagRouteImport } from './routes/api/audience-diag'
 import { Route as ApiDiagRouteImport } from './routes/api/diag'
 import { Route as ApiSyncRouteImport } from './routes/api/sync'
 import { Route as ApiTestEmailRouteImport } from './routes/api/test-email'
@@ -73,6 +74,11 @@ const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
   id: '/admin',
   path: '/admin',
   getParentRoute: () => AuthenticatedRoute,
+} as any)
+const ApiAudienceDiagRoute = ApiAudienceDiagRouteImport.update({
+  id: '/api/audience-diag',
+  path: '/api/audience-diag',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDiagRoute = ApiDiagRouteImport.update({
   id: '/api/diag',
@@ -244,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/pending-approval': typeof PendingApprovalRoute
   '/register': typeof RegisterRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/api/audience-diag': typeof ApiAudienceDiagRoute
   '/api/diag': typeof ApiDiagRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
@@ -279,6 +286,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/pending-approval': typeof PendingApprovalRoute
   '/register': typeof RegisterRoute
+  '/api/audience-diag': typeof ApiAudienceDiagRoute
   '/api/diag': typeof ApiDiagRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
@@ -317,6 +325,7 @@ export interface FileRoutesById {
   '/pending-approval': typeof PendingApprovalRoute
   '/register': typeof RegisterRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/api/audience-diag': typeof ApiAudienceDiagRoute
   '/api/diag': typeof ApiDiagRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
@@ -355,6 +364,7 @@ export interface FileRouteTypes {
     | '/pending-approval'
     | '/register'
     | '/admin'
+    | '/api/audience-diag'
     | '/api/diag'
     | '/api/sync'
     | '/api/test-email'
@@ -390,6 +400,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pending-approval'
     | '/register'
+    | '/api/audience-diag'
     | '/api/diag'
     | '/api/sync'
     | '/api/test-email'
@@ -427,6 +438,7 @@ export interface FileRouteTypes {
     | '/pending-approval'
     | '/register'
     | '/_authenticated/admin'
+    | '/api/audience-diag'
     | '/api/diag'
     | '/api/sync'
     | '/api/test-email'
@@ -464,6 +476,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PendingApprovalRoute: typeof PendingApprovalRoute
   RegisterRoute: typeof RegisterRoute
+  ApiAudienceDiagRoute: typeof ApiAudienceDiagRoute
   ApiDiagRoute: typeof ApiDiagRoute
   ApiSyncRoute: typeof ApiSyncRouteWithChildren
   ApiTestEmailRoute: typeof ApiTestEmailRoute
@@ -516,6 +529,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin'
       preLoaderRoute: typeof AuthenticatedAdminRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/audience-diag': {
+      id: '/api/audience-diag'
+      path: '/api/audience-diag'
+      fullPath: '/api/audience-diag'
+      preLoaderRoute: typeof ApiAudienceDiagRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/diag': {
       id: '/api/diag'
@@ -807,6 +827,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PendingApprovalRoute: PendingApprovalRoute,
   RegisterRoute: RegisterRoute,
+  ApiAudienceDiagRoute: ApiAudienceDiagRoute,
   ApiDiagRoute: ApiDiagRoute,
   ApiSyncRoute: ApiSyncRouteWithChildren,
   ApiTestEmailRoute: ApiTestEmailRoute,
