@@ -94,7 +94,7 @@ async function withCrmRateLimitGuard<T>(
 }
 
 // FIX #16: Added exponential backoff retry on Clover 429 (rate-limit) responses.
-async function cloverGet(path: string, maxRetries = 3): Promise<any> {
+export async function cloverGet(path: string, maxRetries = 3): Promise<any> {
   const cfg = getIntegrationConfig();
   const token = cfg.clover.apiKey.trim();
 
@@ -129,7 +129,7 @@ async function cloverGet(path: string, maxRetries = 3): Promise<any> {
   }
 }
 
-async function cloverPaginate(
+export async function cloverPaginate(
   basePath: string,
   opts: { limit?: number; maxPages?: number; extraParams?: string } = {},
 ): Promise<{ elements: any[]; pages: number }> {
