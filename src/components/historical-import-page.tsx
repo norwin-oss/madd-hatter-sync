@@ -67,8 +67,8 @@ type ListPayload =
 
 type CancelPayload = { ok: true } | { ok: false; error?: string };
 
-const SUPER_ADMIN =
-  typeof localStorage !== "undefined" ? localStorage.getItem("admin-email") || "" : "";
+// Authentication is verified via the adminMe / checkAdminApproval route gate
+// and the server function re-checks caller permission on every request.
 
 function fmtDate(ms: number): string {
   if (!ms) return "—";
@@ -115,6 +115,21 @@ export function HistoricalImportPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qc = useQueryClient();
 
+  // Read current user session from /api/auth/me
+  const { data: meData, isLoading: isMeLoading } = useQuery({
+    queryKey: ["auth-me-current"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (!res.ok) return null;
+      const json = await res.json();
+      return json?.session?.email ?? null;
+    },
+    staleTime: 60_000,
+  });
+
+  const currentUserEmail: string | null = meData ?? null;
+  const isSuperAdmin = isSuperAdminEmail(currentUserEmail);
+
   const startFn = useServerFn(startBackfillFn);
   const resumeFn = useServerFn(resumeBackfillFn);
   const cancelFn = useServerFn(cancelBackfillFn);
@@ -124,6 +139,7 @@ export function HistoricalImportPage() {
     queryFn: () => listBackfillStatesFn(),
     refetchOnMount: true,
     staleTime: 0,
+    enabled: isSuperAdmin,
   });
 
   const listPayload = data as ListPayload | undefined;
@@ -255,14 +271,21 @@ export function HistoricalImportPage() {
         description="Backfill complete historical Clover order and line-item data into the dashboard for full reporting coverage."
       />
 
-      {!isSuperAdminEmail(SUPER_ADMIN) ? (
+      {isMeLoading ? (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <p className="text-sm text-muted-foreground">Checking permissions…</p>
+          </CardContent>
+        </Card>
+      ) : !isSuperAdmin ? (
         <Card>
           <CardContent className="py-10 text-center">
             <p className="text-sm font-semibold text-foreground">
               This tool is restricted to super-admin accounts.
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Sign in with an authorized administrator email to run a historical import.
+              Sign in with an authorized administrator email to run a historical import. Current:{" "}
+              {currentUserEmail ?? "none"}
             </p>
           </CardContent>
         </Card>
