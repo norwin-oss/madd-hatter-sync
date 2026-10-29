@@ -25,6 +25,7 @@ import { Route as AuthenticatedAdminCategoriesRouteImport } from './routes/_auth
 import { Route as AuthenticatedAdminCustomerPurchasesRouteImport } from './routes/_authenticated/admin.customer-purchases'
 import { Route as AuthenticatedAdminCustomersRouteImport } from './routes/_authenticated/admin.customers'
 import { Route as AuthenticatedAdminEmployeesRouteImport } from './routes/_authenticated/admin.employees'
+import { Route as AuthenticatedAdminHistoricalImportRouteImport } from './routes/_authenticated/admin.historical-import'
 import { Route as AuthenticatedAdminItemsRouteImport } from './routes/_authenticated/admin.items'
 import { Route as AuthenticatedAdminLogsRouteImport } from './routes/_authenticated/admin.logs'
 import { Route as AuthenticatedAdminModifiersRouteImport } from './routes/_authenticated/admin.modifiers'
@@ -128,6 +129,12 @@ const AuthenticatedAdminEmployeesRoute =
   AuthenticatedAdminEmployeesRouteImport.update({
     id: '/employees',
     path: '/employees',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
+const AuthenticatedAdminHistoricalImportRoute =
+  AuthenticatedAdminHistoricalImportRouteImport.update({
+    id: '/historical-import',
+    path: '/historical-import',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
 const AuthenticatedAdminItemsRoute = AuthenticatedAdminItemsRouteImport.update({
@@ -253,6 +260,7 @@ export interface FileRoutesByFullPath {
   '/admin/customer-purchases': typeof AuthenticatedAdminCustomerPurchasesRoute
   '/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/admin/employees': typeof AuthenticatedAdminEmployeesRoute
+  '/admin/historical-import': typeof AuthenticatedAdminHistoricalImportRoute
   '/admin/items': typeof AuthenticatedAdminItemsRoute
   '/admin/logs': typeof AuthenticatedAdminLogsRoute
   '/admin/modifiers': typeof AuthenticatedAdminModifiersRoute
@@ -288,6 +296,7 @@ export interface FileRoutesByTo {
   '/admin/customer-purchases': typeof AuthenticatedAdminCustomerPurchasesRoute
   '/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/admin/employees': typeof AuthenticatedAdminEmployeesRoute
+  '/admin/historical-import': typeof AuthenticatedAdminHistoricalImportRoute
   '/admin/items': typeof AuthenticatedAdminItemsRoute
   '/admin/logs': typeof AuthenticatedAdminLogsRoute
   '/admin/modifiers': typeof AuthenticatedAdminModifiersRoute
@@ -326,6 +335,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/customer-purchases': typeof AuthenticatedAdminCustomerPurchasesRoute
   '/_authenticated/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/_authenticated/admin/employees': typeof AuthenticatedAdminEmployeesRoute
+  '/_authenticated/admin/historical-import': typeof AuthenticatedAdminHistoricalImportRoute
   '/_authenticated/admin/items': typeof AuthenticatedAdminItemsRoute
   '/_authenticated/admin/logs': typeof AuthenticatedAdminLogsRoute
   '/_authenticated/admin/modifiers': typeof AuthenticatedAdminModifiersRoute
@@ -364,6 +374,7 @@ export interface FileRouteTypes {
     | '/admin/customer-purchases'
     | '/admin/customers'
     | '/admin/employees'
+    | '/admin/historical-import'
     | '/admin/items'
     | '/admin/logs'
     | '/admin/modifiers'
@@ -399,6 +410,7 @@ export interface FileRouteTypes {
     | '/admin/customer-purchases'
     | '/admin/customers'
     | '/admin/employees'
+    | '/admin/historical-import'
     | '/admin/items'
     | '/admin/logs'
     | '/admin/modifiers'
@@ -436,6 +448,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/customer-purchases'
     | '/_authenticated/admin/customers'
     | '/_authenticated/admin/employees'
+    | '/_authenticated/admin/historical-import'
     | '/_authenticated/admin/items'
     | '/_authenticated/admin/logs'
     | '/_authenticated/admin/modifiers'
@@ -587,6 +600,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminEmployeesRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/historical-import': {
+      id: '/_authenticated/admin/historical-import'
+      path: '/historical-import'
+      fullPath: '/admin/historical-import'
+      preLoaderRoute: typeof AuthenticatedAdminHistoricalImportRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/items': {
       id: '/_authenticated/admin/items'
       path: '/items'
@@ -730,6 +750,7 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminCustomerPurchasesRoute: typeof AuthenticatedAdminCustomerPurchasesRoute
   AuthenticatedAdminCustomersRoute: typeof AuthenticatedAdminCustomersRoute
   AuthenticatedAdminEmployeesRoute: typeof AuthenticatedAdminEmployeesRoute
+  AuthenticatedAdminHistoricalImportRoute: typeof AuthenticatedAdminHistoricalImportRoute
   AuthenticatedAdminItemsRoute: typeof AuthenticatedAdminItemsRoute
   AuthenticatedAdminLogsRoute: typeof AuthenticatedAdminLogsRoute
   AuthenticatedAdminModifiersRoute: typeof AuthenticatedAdminModifiersRoute
@@ -756,6 +777,8 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
     AuthenticatedAdminCustomerPurchasesRoute,
   AuthenticatedAdminCustomersRoute: AuthenticatedAdminCustomersRoute,
   AuthenticatedAdminEmployeesRoute: AuthenticatedAdminEmployeesRoute,
+  AuthenticatedAdminHistoricalImportRoute:
+    AuthenticatedAdminHistoricalImportRoute,
   AuthenticatedAdminItemsRoute: AuthenticatedAdminItemsRoute,
   AuthenticatedAdminLogsRoute: AuthenticatedAdminLogsRoute,
   AuthenticatedAdminModifiersRoute: AuthenticatedAdminModifiersRoute,

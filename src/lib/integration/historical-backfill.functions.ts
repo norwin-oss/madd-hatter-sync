@@ -122,25 +122,23 @@ export const getBackfillStatusFn = createServerFn({ method: "GET" })
     return { ok: true as const, state: toDTO(row) };
   });
 
-export const listBackfillStatesFn = createServerFn({ method: "GET" }).handler(
-  async () => {
-    try {
-      const cfg = getIntegrationConfig();
-      const rows = await listBackfillStates(cfg.clover.merchantId);
-      return { ok: true as const, states: rows.map(toDTO) };
-    } catch (e: unknown) {
-      if (isSetupRequired(e)) {
-        return {
-          ok: false as const,
-          setupRequired: true as const,
-          missing: getMissingSecrets(e),
-          message: (e as Error).message,
-        };
-      }
-      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+export const listBackfillStatesFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const cfg = getIntegrationConfig();
+    const rows = await listBackfillStates(cfg.clover.merchantId);
+    return { ok: true as const, states: rows.map(toDTO) };
+  } catch (e: unknown) {
+    if (isSetupRequired(e)) {
+      return {
+        ok: false as const,
+        setupRequired: true as const,
+        missing: getMissingSecrets(e),
+        message: (e as Error).message,
+      };
     }
-  },
-);
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+});
 
 export const cancelBackfillFn = createServerFn({ method: "POST" })
   .validator((data) => z.object({ stateId: z.string().min(1) }).parse(data))

@@ -68,6 +68,14 @@ const NAV: NavEntry[] = [
       { to: "/admin/modifiers", label: "Modifier Groups", icon: SlidersHorizontal },
     ],
   },
+  {
+    label: "Data Tools",
+    icon: SlidersHorizontal,
+    children: [
+      { to: "/admin/historical-import", label: "Historical Import", icon: SlidersHorizontal },
+      { to: "/admin/pos-data", label: "POS Data", icon: Package },
+    ],
+  },
   { to: "/admin/employees", label: "Employees", icon: Users },
   { to: "/admin/customers", label: "Customers", icon: Users },
   { to: "/admin/customer-purchases", label: "Customer Purchases", icon: ShoppingCart },

@@ -22,13 +22,7 @@ import { cloverGet, cloverPaginate } from "./ingestion.server";
 import { upsertOrderRecord, upsertOrderItemRecord } from "./pos-upserts.server";
 import { isSetupRequired } from "./config.server";
 
-export type BackfillStatus =
-  | "pending"
-  | "running"
-  | "paused"
-  | "complete"
-  | "failed"
-  | "cancelled";
+export type BackfillStatus = "pending" | "running" | "paused" | "complete" | "failed" | "cancelled";
 
 export type BackfillStateRow = {
   id: string;
@@ -137,9 +131,7 @@ export async function getOrCreateBackfillState(
  * index). Returns the locked row or null if another import is already
  * running for this merchant.
  */
-export async function acquireBackfill(
-  stateId: string,
-): Promise<BackfillStateRow | null> {
+export async function acquireBackfill(stateId: string): Promise<BackfillStateRow | null> {
   const sb = getSupabaseServer();
   // Conditional update — only acquires if not already running/complete.
   const { data, error } = await sb
@@ -161,9 +153,7 @@ export async function acquireBackfill(
   return data ? toRow(data) : null;
 }
 
-export async function getBackfillState(
-  stateId: string,
-): Promise<BackfillStateRow | null> {
+export async function getBackfillState(stateId: string): Promise<BackfillStateRow | null> {
   const sb = getSupabaseServer();
   const { data } = await sb
     .from("historical_backfill_state")
@@ -173,9 +163,7 @@ export async function getBackfillState(
   return data ? toRow(data) : null;
 }
 
-export async function listBackfillStates(
-  merchantId: string,
-): Promise<BackfillStateRow[]> {
+export async function listBackfillStates(merchantId: string): Promise<BackfillStateRow[]> {
   const sb = getSupabaseServer();
   const { data } = await sb
     .from("historical_backfill_state")
@@ -231,10 +219,7 @@ export async function runBackfillTick(
   let lastError: string | null = locked.last_error;
   let done = false;
 
-  const persistProgress = async (
-    status: BackfillStatus,
-    finished: boolean,
-  ) => {
+  const persistProgress = async (status: BackfillStatus, finished: boolean) => {
     const body: Record<string, unknown> = {
       last_cursor_ms: cursor,
       imported_orders: importedOrders,
@@ -246,10 +231,7 @@ export async function runBackfillTick(
       status,
     };
     if (finished) body["finished_at"] = new Date().toISOString();
-    await sb
-      .from("historical_backfill_state")
-      .update(body)
-      .eq("id", stateId);
+    await sb.from("historical_backfill_state").update(body).eq("id", stateId);
   };
 
   try {
@@ -280,7 +262,11 @@ export async function runBackfillTick(
         try {
           const r2 = await cloverPaginate(
             `/v3/merchants/${merchantId}/orders?expand=lineItems,payments,refunds,customers&${filter}`,
-            { limit: PAGE_LIMIT, maxPages: MAX_PAGES_PER_SLICE, extraParams: "orderBy=createdTime+ASC" },
+            {
+              limit: PAGE_LIMIT,
+              maxPages: MAX_PAGES_PER_SLICE,
+              extraParams: "orderBy=createdTime+ASC",
+            },
           );
           sliceOrders = r2.elements;
         } catch (e2: any) {
@@ -293,16 +279,14 @@ export async function runBackfillTick(
       }
 
       for (const order of sliceOrders) {
-        const createdTime =
-          typeof order.createdTime === "number" ? order.createdTime : 0;
+        const createdTime = typeof order.createdTime === "number" ? order.createdTime : 0;
         try {
           // upsertOrderRecord returns the persisted row with its real UUID id,
           // which upsertOrderItemRecord needs as the order_id FK.
           const orderRow = await upsertOrderRecord(merchantId, order);
           importedOrders += 1;
           const currency = order.currency ?? "USD";
-          const lineItems: any[] =
-            order.lineItems?.elements ?? order.lineItems ?? [];
+          const lineItems: any[] = order.lineItems?.elements ?? order.lineItems ?? [];
           const paymentStatus = deriveStatusSafe(order);
           for (const li of lineItems) {
             try {
@@ -386,8 +370,7 @@ export async function runBackfillTick(
 function deriveStatusSafe(order: any): string {
   const payments: any[] = order.payments?.elements ?? order.payments ?? [];
   if (payments.length === 0) return "OPEN";
-  if (payments.every((p) => p.result === "VOIDED" || p.result === "FAILED"))
-    return "VOIDED";
+  if (payments.every((p) => p.result === "VOIDED" || p.result === "FAILED")) return "VOIDED";
   return "PAID";
 }
 
