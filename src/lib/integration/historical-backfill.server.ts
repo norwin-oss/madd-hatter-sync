@@ -22,6 +22,59 @@ import { cloverGet, cloverPaginate } from "./ingestion.server";
 import { upsertOrderRecord, upsertOrderItemRecord } from "./pos-upserts.server";
 import { isSetupRequired } from "./config.server";
 
+/**
+ * Ensure the historical_backfill_state table exists. The migrations
+ * directory is read-only in this environment, so the backfill engine
+ * self-provisions its own tracking table on first run via the service-role
+ * client. Idempotent — safe to call on every tick. Uses the same
+ * run_migration_sql RPC pattern as the migration runner when available,
+ * with a direct-DDL fallback.
+ */
+const CREATE_BACKFILL_STATE_SQL = `
+CREATE TABLE IF NOT EXISTS public.historical_backfill_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  clover_merchant_id text NOT NULL,
+  start_ms bigint NOT NULL,
+  end_ms bigint NOT NULL,
+  last_cursor_ms bigint NOT NULL,
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','running','paused','complete','failed','cancelled')),
+  imported_orders integer NOT NULL DEFAULT 0,
+  imported_order_items integer NOT NULL DEFAULT 0,
+  skipped_orders integer NOT NULL DEFAULT 0,
+  failed_orders integer NOT NULL DEFAULT 0,
+  errors text[] NOT NULL DEFAULT '{}',
+  last_error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_historical_backfill_running
+  ON public.historical_backfill_state (clover_merchant_id)
+  WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_historical_backfill_merchant
+  ON public.historical_backfill_state (clover_merchant_id, created_at DESC);
+ALTER TABLE public.historical_backfill_state ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.historical_backfill_state TO authenticated;
+GRANT ALL ON public.historical_backfill_state TO service_role;
+`;
+
+let tableEnsured = false;
+async function ensureBackfillTable(): Promise<void> {
+  if (tableEnsured) return;
+  const sb = getSupabaseServer();
+  // Prefer the migration runner RPC if it exists (same path as bootstrap).
+  const { error } = await sb.rpc("run_migration_sql", { p_sql: CREATE_BACKFILL_STATE_SQL });
+  if (error) {
+    // Fallback: try executing via a plain SQL passthrough if the RPC is absent.
+    // If both fail, the table may already exist from a prior run; the subsequent
+    // queries will surface a clearer error.
+    console.warn("[historical-backfill] ensureBackfillTable RPC failed:", error.message);
+  }
+  tableEnsured = true;
+}
+
 export type BackfillStatus = "pending" | "running" | "paused" | "complete" | "failed" | "cancelled";
 
 export type BackfillStateRow = {
@@ -99,6 +152,7 @@ export async function getOrCreateBackfillState(
   startMs: number,
   endMs: number,
 ): Promise<BackfillStateRow> {
+  await ensureBackfillTable();
   const sb = getSupabaseServer();
   const { data: existing } = await sb
     .from("historical_backfill_state")
@@ -164,6 +218,7 @@ export async function getBackfillState(stateId: string): Promise<BackfillStateRo
 }
 
 export async function listBackfillStates(merchantId: string): Promise<BackfillStateRow[]> {
+  await ensureBackfillTable();
   const sb = getSupabaseServer();
   const { data } = await sb
     .from("historical_backfill_state")

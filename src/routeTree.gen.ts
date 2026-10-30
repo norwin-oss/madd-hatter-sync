@@ -16,6 +16,7 @@ import { Route as PendingApprovalRouteImport } from './routes/pending-approval'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as ApiDiagRouteImport } from './routes/api/diag'
+import { Route as ApiHistoricalImportRouteImport } from './routes/api/historical-import'
 import { Route as ApiSyncRouteImport } from './routes/api/sync'
 import { Route as ApiTestEmailRouteImport } from './routes/api/test-email'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
@@ -78,6 +79,11 @@ const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
 const ApiDiagRoute = ApiDiagRouteImport.update({
   id: '/api/diag',
   path: '/api/diag',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHistoricalImportRoute = ApiHistoricalImportRouteImport.update({
+  id: '/api/historical-import',
+  path: '/api/historical-import',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSyncRoute = ApiSyncRouteImport.update({
@@ -252,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/register': typeof RegisterRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/diag': typeof ApiDiagRoute
+  '/api/historical-import': typeof ApiHistoricalImportRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
   '/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
@@ -288,6 +295,7 @@ export interface FileRoutesByTo {
   '/pending-approval': typeof PendingApprovalRoute
   '/register': typeof RegisterRoute
   '/api/diag': typeof ApiDiagRoute
+  '/api/historical-import': typeof ApiHistoricalImportRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
   '/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
@@ -327,6 +335,7 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/diag': typeof ApiDiagRoute
+  '/api/historical-import': typeof ApiHistoricalImportRoute
   '/api/sync': typeof ApiSyncRouteWithChildren
   '/api/test-email': typeof ApiTestEmailRoute
   '/_authenticated/admin/analytics': typeof AuthenticatedAdminAnalyticsRoute
@@ -366,6 +375,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/admin'
     | '/api/diag'
+    | '/api/historical-import'
     | '/api/sync'
     | '/api/test-email'
     | '/admin/analytics'
@@ -402,6 +412,7 @@ export interface FileRouteTypes {
     | '/pending-approval'
     | '/register'
     | '/api/diag'
+    | '/api/historical-import'
     | '/api/sync'
     | '/api/test-email'
     | '/admin/analytics'
@@ -440,6 +451,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/_authenticated/admin'
     | '/api/diag'
+    | '/api/historical-import'
     | '/api/sync'
     | '/api/test-email'
     | '/_authenticated/admin/analytics'
@@ -478,6 +490,7 @@ export interface RootRouteChildren {
   PendingApprovalRoute: typeof PendingApprovalRoute
   RegisterRoute: typeof RegisterRoute
   ApiDiagRoute: typeof ApiDiagRoute
+  ApiHistoricalImportRoute: typeof ApiHistoricalImportRoute
   ApiSyncRoute: typeof ApiSyncRouteWithChildren
   ApiTestEmailRoute: typeof ApiTestEmailRoute
   ApiAuthLoginRoute: typeof ApiAuthLoginRoute
@@ -535,6 +548,13 @@ declare module '@tanstack/react-router' {
       path: '/api/diag'
       fullPath: '/api/diag'
       preLoaderRoute: typeof ApiDiagRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/historical-import': {
+      id: '/api/historical-import'
+      path: '/api/historical-import'
+      fullPath: '/api/historical-import'
+      preLoaderRoute: typeof ApiHistoricalImportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/sync': {
@@ -831,6 +851,7 @@ const rootRouteChildren: RootRouteChildren = {
   PendingApprovalRoute: PendingApprovalRoute,
   RegisterRoute: RegisterRoute,
   ApiDiagRoute: ApiDiagRoute,
+  ApiHistoricalImportRoute: ApiHistoricalImportRoute,
   ApiSyncRoute: ApiSyncRouteWithChildren,
   ApiTestEmailRoute: ApiTestEmailRoute,
   ApiAuthLoginRoute: ApiAuthLoginRoute,
