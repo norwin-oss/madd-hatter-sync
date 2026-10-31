@@ -206,6 +206,10 @@ export async function getOrCreateBackfillState(
       previousRangeRun.status === "cancelled" ||
       previousRangeRun.status === "failed")
   ) {
+    // Reset the entire row so a re-run starts clean: cursor back to the
+    // range start, all counters zeroed, errors cleared. The upserts
+    // themselves are idempotent (onConflict purchase_reference) so the
+    // DB rows are never duplicated — only the tracking counters need reset.
     const { data: resetRow, error: resetErr } = await sb
       .from("historical_backfill_state")
       .update({
@@ -214,6 +218,11 @@ export async function getOrCreateBackfillState(
         started_at: new Date().toISOString(),
         finished_at: null,
         last_error: null,
+        imported_orders: 0,
+        imported_order_items: 0,
+        skipped_orders: 0,
+        failed_orders: 0,
+        errors: [],
       })
       .eq("id", previousRangeRun.id)
       .select("*")
