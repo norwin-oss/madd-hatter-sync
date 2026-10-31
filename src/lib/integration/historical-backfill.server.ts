@@ -19,7 +19,13 @@
 import { getIntegrationConfig } from "./config.server";
 import { getSupabaseServer } from "./supabase.server";
 import { cloverGet, cloverPaginate } from "./ingestion.server";
-import { upsertOrderRecord, upsertOrderItemRecord } from "./pos-upserts.server";
+import {
+  upsertOrderRecord,
+  upsertOrderItemRecord,
+  bulkUpsertOrders,
+  bulkUpsertOrderItems,
+  buildOrderItemRowsForSlice,
+} from "./pos-upserts.server";
 import { isSetupRequired } from "./config.server";
 
 /**
@@ -113,7 +119,9 @@ export type BackfillTickResult = {
 // CPU/wall-time ceiling. Each tick processes as many 1-day slices as fit
 // within this budget, then pauses and persists progress. The client
 // auto-pump calls resumeBackfillFn every 3s to drive the next tick.
-const TICK_BUDGET_MS = 10_000;
+// Bumped from 10s to 25s: bulk upserts (one call per slice) make each
+// round-trip far cheaper, so we can safely process more slices per tick.
+const TICK_BUDGET_MS = 25_000;
 // Maximum pages per slice call. A single day rarely exceeds 100 orders,
 // so 50 pages (5,000 orders) per slice is more than enough and never
 // silently truncates. The slice itself guarantees completion.
@@ -428,44 +436,34 @@ export async function runBackfillTick(
         }
       }
 
-      for (const order of sliceOrders) {
-        const createdTime = typeof order.createdTime === "number" ? order.createdTime : 0;
+      // Bulk-upsert all orders in this slice in a single Supabase call,
+      // then bulk-upsert all their line items in a single call. This is
+      // ~100x fewer round-trips than one upsert per order/item and is what
+      // makes a 2-year range finish in minutes instead of hours.
+      if (sliceOrders.length > 0) {
         try {
-          // upsertOrderRecord returns the persisted row with its real UUID id,
-          // which upsertOrderItemRecord needs as the order_id FK.
-          const orderRow = await upsertOrderRecord(merchantId, order);
-          importedOrders += 1;
-          const currency = order.currency ?? "USD";
-          const lineItems: any[] = order.lineItems?.elements ?? order.lineItems ?? [];
-          const paymentStatus = deriveStatusSafe(order);
-          for (const li of lineItems) {
-            try {
-              await upsertOrderItemRecord(
-                merchantId,
-                orderRow?.id ?? "",
-                order.id,
-                li,
-                currency,
-                paymentStatus,
-                createdTime,
-              );
-              importedItems += 1;
-            } catch (e: any) {
-              const msg = `item ${li.id} (order ${order.id}): ${e?.message ?? String(e)}`;
-              newErrors.push(msg);
-              lastError = msg;
-            }
+          const orderMap = await bulkUpsertOrders(merchantId, sliceOrders);
+          importedOrders += sliceOrders.length;
+
+          const { rows: itemRows, missingOrderIds } = buildOrderItemRowsForSlice(
+            merchantId,
+            sliceOrders,
+            orderMap,
+          );
+          if (missingOrderIds.length > 0) {
+            const msg = `slice ${new Date(sliceStart).toISOString()}: ${missingOrderIds.length} orders missing after bulk upsert`;
+            newErrors.push(msg);
+            lastError = msg;
           }
-          // Advance the cursor past this order's createdTime. Because the
-          // slice filter is createdTime>sliceStart & <=sliceEnd and we
-          // order ASC, the next tick resumes at sliceEnd which is > all
-          // orders in this slice — no identical-createdTime skip.
-          if (createdTime > cursor) cursor = createdTime;
+          if (itemRows.length > 0) {
+            await bulkUpsertOrderItems(itemRows);
+            importedItems += itemRows.length;
+          }
         } catch (e: any) {
-          failedOrders += 1;
-          const msg = `order ${order.id}: ${e?.message ?? String(e)}`;
+          const msg = `slice ${new Date(sliceStart).toISOString()}: ${e?.message ?? String(e)}`;
           newErrors.push(msg);
           lastError = msg;
+          failedOrders += sliceOrders.length;
         }
       }
 
@@ -513,15 +511,6 @@ export async function runBackfillTick(
       remaining: true,
     };
   }
-}
-
-// Lightweight payment-status derivation that does not import the full
-// pos-upserts derivePaymentStatus (kept local to avoid a cycle).
-function deriveStatusSafe(order: any): string {
-  const payments: any[] = order.payments?.elements ?? order.payments ?? [];
-  if (payments.length === 0) return "OPEN";
-  if (payments.every((p) => p.result === "VOIDED" || p.result === "FAILED")) return "VOIDED";
-  return "PAID";
 }
 
 export { isSetupRequired };

@@ -292,6 +292,31 @@ export async function upsertOrderItemRecord(
   createdTime: number,
 ) {
   const sb = getSupabaseServer();
+  const { error } = await sb
+    .from("order_items")
+    .upsert(
+      buildOrderItemRow(merchantId, orderRowId, orderId, li, currency, paymentStatus, createdTime),
+      {
+        onConflict: "purchase_reference",
+      },
+    );
+  if (error) throw new Error(`upsert order item: ${error.message}`);
+}
+
+/**
+ * Build a single order_items row object from a Clover line item, without
+ * writing it. Shared by the single-row and bulk upsert paths so the two
+ * paths can never drift in shape.
+ */
+function buildOrderItemRow(
+  merchantId: string,
+  orderRowId: string,
+  orderId: string,
+  li: any,
+  currency: string,
+  paymentStatus: string,
+  createdTime: number,
+) {
   const unit = cents(li.price);
   const qty = num(li.quantity ?? 1);
   const modifiers = (li.modifiers?.elements ?? li.modifiers ?? []).map((m: any) => ({
@@ -307,30 +332,175 @@ export async function upsertOrderItemRecord(
   const lineTotal = Math.max(0, unit * qty + modSum - discountCents);
 
   const ref = purchaseReference(merchantId, orderId, li.id);
-  const { error } = await sb.from("order_items").upsert(
-    {
-      order_id: orderRowId,
-      clover_line_item_id: li.id,
-      clover_item_id: li.item?.id ?? li.itemId ?? null,
-      clover_order_id: orderId,
-      clover_merchant_id: merchantId,
-      purchase_reference: ref,
-      item_name: li.name ?? "Item",
-      category: li.categoryName ?? li.category?.name ?? null,
-      quantity: qty,
-      unit_price_cents: unit,
-      line_total_cents: lineTotal,
-      currency,
-      payment_status: paymentStatus,
-      status: "pending",
-      flag: null,
-      modifiers_json: modifiers.length ? JSON.stringify(modifiers) : null,
-      discounts_json: lineDiscounts.length ? JSON.stringify(lineDiscounts) : null,
-      unit_name: li.unitName ?? null,
-      note: li.note ?? null,
-      created_time: createdTime,
-    },
-    { onConflict: "purchase_reference" },
-  );
-  if (error) throw new Error(`upsert order item: ${error.message}`);
+  return {
+    order_id: orderRowId,
+    clover_line_item_id: li.id,
+    clover_item_id: li.item?.id ?? li.itemId ?? null,
+    clover_order_id: orderId,
+    clover_merchant_id: merchantId,
+    purchase_reference: ref,
+    item_name: li.name ?? "Item",
+    category: li.categoryName ?? li.category?.name ?? null,
+    quantity: qty,
+    unit_price_cents: unit,
+    line_total_cents: lineTotal,
+    currency,
+    payment_status: paymentStatus,
+    status: "pending",
+    flag: null,
+    modifiers_json: modifiers.length ? JSON.stringify(modifiers) : null,
+    discounts_json: lineDiscounts.length ? JSON.stringify(lineDiscounts) : null,
+    unit_name: li.unitName ?? null,
+    note: li.note ?? null,
+    created_time: createdTime,
+  };
+}
+
+/**
+ * Build an orders row object from a Clover order, without writing it.
+ * Shared by the single-row and bulk upsert paths.
+ */
+function buildOrderRow(merchantId: string, order: any) {
+  const currency = order.currency ?? "USD";
+  const payments: any[] = order.payments?.elements ?? order.payments ?? [];
+  const refunds: any[] = order.refunds?.elements ?? order.refunds ?? [];
+  const discounts: any[] = order.discounts?.elements ?? order.discounts ?? [];
+  const lineItems: any[] = order.lineItems?.elements ?? order.lineItems ?? [];
+
+  const total = cents(order.total);
+
+  const netSales = lineItems.reduce((s, li) => {
+    const unit = cents(li.price);
+    const qty = num(li.quantity ?? 1);
+    const mods = (li.modifiers?.elements ?? li.modifiers ?? []).reduce(
+      (ms: number, m: any) => ms + cents(m.amount ?? m.price),
+      0,
+    );
+    const disc = (li.discounts?.elements ?? li.discounts ?? []).reduce(
+      (ds: number, d: any) => ds + cents(d.amount),
+      0,
+    );
+    return s + Math.max(0, unit * qty + mods - disc);
+  }, 0);
+
+  const subtotal = netSales;
+  const discountTotal = discounts.reduce((s, d) => s + cents(d.amount), 0);
+  const taxTotal = cents(order.taxAmount) + lineItems.reduce((s, li) => s + cents(li.taxAmount), 0);
+  const serviceCharge = cents(order.serviceCharge?.amount);
+  const tip = payments.reduce((s, p) => s + cents(p.tipAmount), 0);
+  const totalRefunded = refunds.reduce((s, r) => s + cents(r.amount), 0);
+  const netTotal = Math.max(0, (total > 0 ? total : netSales) - totalRefunded);
+
+  const paymentStatus = derivePaymentStatus(order, payments);
+  const voided =
+    payments.length > 0 && payments.every((p) => p.result === "VOIDED" || p.result === "FAILED");
+
+  return {
+    clover_merchant_id: merchantId,
+    clover_order_id: order.id,
+    clover_customer_id: order.customer?.id ?? order.customers?.elements?.[0]?.id ?? null,
+    status: "pending",
+    payment_status: paymentStatus,
+    currency,
+    total_cents: total,
+    net_total_cents: netTotal,
+    net_sales_cents: netSales,
+    subtotal_cents: subtotal,
+    discount_total_cents: discountTotal,
+    tax_total_cents: taxTotal,
+    service_charge_cents: serviceCharge,
+    tip_cents: tip,
+    total_refunded_cents: totalRefunded,
+    voided,
+    created_time: typeof order.createdTime === "number" ? order.createdTime : 0,
+    modified_time: typeof order.modifiedTime === "number" ? order.modifiedTime : null,
+    location_name: null,
+    clover_employee_id: order.employee?.id ?? null,
+    order_type: order.orderType?.label ?? order.orderType ?? null,
+    group_line_items: !!order.groupLineItems,
+    test_mode: !!order.testMode,
+  };
+}
+
+/**
+ * Bulk-upsert a batch of Clover orders in a single Supabase call and return
+ * the persisted rows (with their real UUID ids) keyed by clover_order_id.
+ * Used by the historical backfill to avoid one round-trip per order.
+ * Chunks internally to stay under Supabase's per-request row ceiling.
+ */
+export async function bulkUpsertOrders(
+  merchantId: string,
+  orders: any[],
+  chunkSize = 200,
+): Promise<Map<string, { id: string; clover_order_id: string }>> {
+  const sb = getSupabaseServer();
+  const result = new Map<string, { id: string; clover_order_id: string }>();
+  for (let i = 0; i < orders.length; i += chunkSize) {
+    const chunk = orders.slice(i, i + chunkSize);
+    const rows = chunk.map((o) => buildOrderRow(merchantId, o));
+    const { data, error } = await sb
+      .from("orders")
+      .upsert(rows, { onConflict: "clover_merchant_id,clover_order_id" })
+      .select("id, clover_order_id");
+    if (error) throw new Error(`bulk upsert orders: ${error.message}`);
+    for (const r of data ?? []) result.set(r.clover_order_id, r);
+  }
+  return result;
+}
+
+/**
+ * Bulk-upsert a batch of order line items in a single Supabase call.
+ * `itemRows` must already be built via buildOrderItemRowsForSlice.
+ * Chunks internally to stay under Supabase's per-request row ceiling.
+ */
+export async function bulkUpsertOrderItems(itemRows: any[], chunkSize = 500): Promise<void> {
+  const sb = getSupabaseServer();
+  for (let i = 0; i < itemRows.length; i += chunkSize) {
+    const chunk = itemRows.slice(i, i + chunkSize);
+    const { error } = await sb
+      .from("order_items")
+      .upsert(chunk, { onConflict: "purchase_reference" });
+    if (error) throw new Error(`bulk upsert order items: ${error.message}`);
+  }
+}
+
+/**
+ * Build all order_items rows for a slice of orders, mapping each line item
+ * to its parent order's persisted UUID via `orderMap`.
+ */
+export function buildOrderItemRowsForSlice(
+  merchantId: string,
+  orders: any[],
+  orderMap: Map<string, { id: string; clover_order_id: string }>,
+): { rows: any[]; missingOrderIds: string[] } {
+  const rows: any[] = [];
+  const missingOrderIds: string[] = [];
+  for (const order of orders) {
+    const orderRow = orderMap.get(order.id);
+    if (!orderRow) {
+      missingOrderIds.push(order.id);
+      continue;
+    }
+    const currency = order.currency ?? "USD";
+    const createdTime = typeof order.createdTime === "number" ? order.createdTime : 0;
+    const paymentStatus = derivePaymentStatus(
+      order,
+      order.payments?.elements ?? order.payments ?? [],
+    );
+    const lineItems: any[] = order.lineItems?.elements ?? order.lineItems ?? [];
+    for (const li of lineItems) {
+      rows.push(
+        buildOrderItemRow(
+          merchantId,
+          orderRow.id,
+          order.id,
+          li,
+          currency,
+          paymentStatus,
+          createdTime,
+        ),
+      );
+    }
+  }
+  return { rows, missingOrderIds };
 }
