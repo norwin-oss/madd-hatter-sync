@@ -22,6 +22,7 @@ import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { isSuperAdminEmail } from "@/lib/integration/super-admin";
+import { cn } from "@/lib/utils";
 
 type BackfillStateDTO = {
   id: string;
@@ -107,12 +108,77 @@ function statusVariant(status: string) {
   }
 }
 
+type DatePreset = { label: string; range: () => { start: string; end: string } };
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const DATE_PRESETS: DatePreset[] = [
+  {
+    label: "Last 30 Days",
+    range: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 30);
+      return { start: toISODate(start), end: toISODate(end) };
+    },
+  },
+  {
+    label: "Last 90 Days",
+    range: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 90);
+      return { start: toISODate(start), end: toISODate(end) };
+    },
+  },
+  {
+    label: "Year to Date",
+    range: () => {
+      const end = new Date();
+      const start = new Date(end.getFullYear(), 0, 1);
+      return { start: toISODate(start), end: toISODate(end) };
+    },
+  },
+  {
+    label: "Last Year",
+    range: () => {
+      const y = new Date().getFullYear() - 1;
+      return { start: `${y}-01-01`, end: `${y}-12-31` };
+    },
+  },
+  {
+    label: "2024 – 2025",
+    range: () => ({ start: "2024-01-01", end: "2025-12-31" }),
+  },
+  {
+    label: "Full Lifetime",
+    range: () => {
+      const end = new Date();
+      return { start: "2020-01-01", end: toISODate(end) };
+    },
+  },
+];
+
 export function HistoricalImportPage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function applyPreset(p: DatePreset) {
+    const { start: s, end: e } = p.range();
+    setStart(s);
+    setEnd(e);
+    setActivePreset(p.label);
+    setError(null);
+  }
   const qc = useQueryClient();
 
   // Read current user session from /api/auth/me
@@ -310,6 +376,23 @@ export function HistoricalImportPage() {
               </p>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap gap-2">
+                {DATE_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => applyPreset(p)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                      activePreset === p.label
+                        ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                    )}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="hist-start">Start date</Label>
@@ -317,7 +400,10 @@ export function HistoricalImportPage() {
                     id="hist-start"
                     type="date"
                     value={start}
-                    onChange={(e) => setStart(e.target.value)}
+                    onChange={(e) => {
+                      setStart(e.target.value);
+                      setActivePreset(null);
+                    }}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
@@ -326,7 +412,10 @@ export function HistoricalImportPage() {
                     id="hist-end"
                     type="date"
                     value={end}
-                    onChange={(e) => setEnd(e.target.value)}
+                    onChange={(e) => {
+                      setEnd(e.target.value);
+                      setActivePreset(null);
+                    }}
                   />
                 </div>
               </div>
