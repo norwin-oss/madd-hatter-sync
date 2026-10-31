@@ -225,10 +225,14 @@ export function HistoricalImportPage() {
     [states],
   );
 
-  // Auto-pump effect: while an import is running OR paused (with remaining work),
-  // automatically call resumeBackfillFn every 4 seconds until it reaches 'complete' or 'failed'.
-  // This ensures the client continuously drives the backfill to 100% completion without getting stuck!
+  // Auto-pump effect: continuously drive an active import to completion.
+  // Uses a ref for the latest active state so the interval always sees the
+  // freshest status (avoiding the stale-closure bug where it captured the
+  // status at interval-creation time and never updated).
   const isPumpingRef = useRef(false);
+  const activeRef = useRef<BackfillStateDTO | null>(active);
+  activeRef.current = active;
+
   useEffect(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -237,14 +241,15 @@ export function HistoricalImportPage() {
 
     if (active && (active.status === "running" || active.status === "paused")) {
       pollRef.current = setInterval(async () => {
-        // First refresh the status
+        // Refresh status first so we see the latest state
         await refetch();
-
-        // If it's paused or running, pump the next tick
-        if (!isPumpingRef.current && (active.status === "paused" || active.status === "running")) {
+        const cur = activeRef.current;
+        if (!cur) return;
+        // Only pump when paused (running means a tick is in-flight server-side)
+        if (cur.status === "paused" && !isPumpingRef.current) {
           isPumpingRef.current = true;
           try {
-            await resumeFn({ data: { stateId: active.id } });
+            await resumeFn({ data: { stateId: cur.id } });
             await qc.invalidateQueries({ queryKey: ["historical-backfill-states"] });
           } catch (e) {
             console.warn("Auto-pump tick error:", e);
@@ -252,7 +257,7 @@ export function HistoricalImportPage() {
             isPumpingRef.current = false;
           }
         }
-      }, 4000);
+      }, 3000);
     }
 
     return () => {
@@ -587,7 +592,9 @@ export function HistoricalImportPage() {
                             Cancel
                           </Button>
                         )}
-                        {(s.status === "complete" || s.status === "cancelled" || s.status === "failed") && (
+                        {(s.status === "complete" ||
+                          s.status === "cancelled" ||
+                          s.status === "failed") && (
                           <Button
                             size="sm"
                             variant="secondary"

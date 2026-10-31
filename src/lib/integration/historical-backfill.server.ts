@@ -109,10 +109,11 @@ export type BackfillTickResult = {
   remaining: boolean;
 };
 
-// Per-tick execution budget (ms). Stays well under the Worker ceiling
-// and under the 30s cron timeout. Each tick processes as many day
-// slices as fit within this budget, then pauses and persists progress.
-const TICK_BUDGET_MS = 18_000;
+// Per-tick execution budget (ms). Stays well under the Cloudflare Worker
+// CPU/wall-time ceiling. Each tick processes as many 1-day slices as fit
+// within this budget, then pauses and persists progress. The client
+// auto-pump calls resumeBackfillFn every 3s to drive the next tick.
+const TICK_BUDGET_MS = 10_000;
 // Maximum pages per slice call. A single day rarely exceeds 100 orders,
 // so 50 pages (5,000 orders) per slice is more than enough and never
 // silently truncates. The slice itself guarantees completion.
@@ -177,9 +178,9 @@ export async function getOrCreateBackfillState(
     if (activeExisting) return toRow(activeExisting);
   }
 
-  // Release any orphaned 'running' records that haven't updated in > 45 seconds,
+  // Release any orphaned 'running' records that haven't updated in > 20 seconds,
   // marking them 'paused' so they never block new runs or retries
-  const staleCutoff = new Date(Date.now() - 45 * 1000).toISOString();
+  const staleCutoff = new Date(Date.now() - 20 * 1000).toISOString();
   await sb
     .from("historical_backfill_state")
     .update({ status: "paused" })
@@ -199,7 +200,12 @@ export async function getOrCreateBackfillState(
     .limit(1)
     .maybeSingle();
 
-  if (previousRangeRun && (previousRangeRun.status === "complete" || previousRangeRun.status === "cancelled" || previousRangeRun.status === "failed")) {
+  if (
+    previousRangeRun &&
+    (previousRangeRun.status === "complete" ||
+      previousRangeRun.status === "cancelled" ||
+      previousRangeRun.status === "failed")
+  ) {
     const { data: resetRow, error: resetErr } = await sb
       .from("historical_backfill_state")
       .update({
@@ -238,8 +244,8 @@ export async function getOrCreateBackfillState(
 export async function acquireBackfill(stateId: string): Promise<BackfillStateRow | null> {
   const sb = getSupabaseServer();
 
-  // First release any zombie runs stuck in 'running' older than 45 seconds
-  const staleCutoff = new Date(Date.now() - 45 * 1000).toISOString();
+  // First release any zombie runs stuck in 'running' older than 20 seconds
+  const staleCutoff = new Date(Date.now() - 20 * 1000).toISOString();
   await sb
     .from("historical_backfill_state")
     .update({ status: "paused" })
@@ -369,12 +375,13 @@ export async function runBackfillTick(
   };
 
   try {
-    // Process day/multi-day slices until budget exhausted or we reach endMs.
-    // Slices dynamically size: 3 days per slice so vast date ranges (e.g. 2024–2025)
-    // make fast, steady progress without hitting page timeouts.
+    // Process 1-day slices until budget exhausted or we reach endMs.
+    // 1-day slices keep each Clover API call light and fast, so a 2-year
+    // range (e.g. 2024–2025) makes steady progress across many ticks
+    // without hitting Worker execution limits or page timeouts.
     while (cursor < endMs && Date.now() - tickStart < budgetMs) {
       const sliceStart = cursor;
-      const sliceSpan = 3 * 24 * 60 * 60 * 1000;
+      const sliceSpan = 1 * 24 * 60 * 60 * 1000;
       const sliceEnd = Math.min(sliceStart + sliceSpan, endMs);
 
       // Note: filter on createdTime uses milliseconds epoch.

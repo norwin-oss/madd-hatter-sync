@@ -73,8 +73,12 @@ export const Route = createFileRoute("/api/historical-import")({
             const merchantId = cfg.clover.merchantId;
             const cleanStart = startParam.trim();
             const cleanEnd = endParam.trim();
-            const startMs = new Date(cleanStart.includes("T") ? cleanStart : `${cleanStart}T00:00:00Z`).getTime();
-            const endMs = new Date(cleanEnd.includes("T") ? cleanEnd : `${cleanEnd}T23:59:59.999Z`).getTime();
+            const startMs = new Date(
+              cleanStart.includes("T") ? cleanStart : `${cleanStart}T00:00:00Z`,
+            ).getTime();
+            const endMs = new Date(
+              cleanEnd.includes("T") ? cleanEnd : `${cleanEnd}T23:59:59.999Z`,
+            ).getTime();
             if (isNaN(startMs) || isNaN(endMs)) {
               return Response.json({ ok: false, error: "Invalid start/end date" }, { status: 400 });
             }
