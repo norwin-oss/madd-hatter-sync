@@ -225,21 +225,43 @@ export function HistoricalImportPage() {
     [states],
   );
 
-  // Poll while an import is running.
+  // Auto-pump effect: while an import is running OR paused (with remaining work),
+  // automatically call resumeBackfillFn every 4 seconds until it reaches 'complete' or 'failed'.
+  // This ensures the client continuously drives the backfill to 100% completion without getting stuck!
+  const isPumpingRef = useRef(false);
   useEffect(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-    if (active?.status === "running") {
-      pollRef.current = setInterval(() => {
-        void refetch();
-      }, 5000);
+
+    if (active && (active.status === "running" || active.status === "paused")) {
+      pollRef.current = setInterval(async () => {
+        // First refresh the status
+        await refetch();
+
+        // If it's paused or running, pump the next tick
+        if (!isPumpingRef.current && (active.status === "paused" || active.status === "running")) {
+          isPumpingRef.current = true;
+          try {
+            await resumeFn({ data: { stateId: active.id } });
+            await qc.invalidateQueries({ queryKey: ["historical-backfill-states"] });
+          } catch (e) {
+            console.warn("Auto-pump tick error:", e);
+          } finally {
+            isPumpingRef.current = false;
+          }
+        }
+      }, 4000);
     }
+
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
     };
-  }, [active?.status, refetch]);
+  }, [active?.id, active?.status, refetch, resumeFn, qc]);
 
   async function handleStart() {
     if (!start || !end) {
@@ -313,6 +335,7 @@ export function HistoricalImportPage() {
         toast.error(res.error ?? "Failed to cancel the import.");
       }
       await qc.invalidateQueries({ queryKey: ["historical-backfill-states"] });
+      await refetch();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -320,12 +343,26 @@ export function HistoricalImportPage() {
     }
   }
 
+  function handleRerun(s: BackfillStateDTO) {
+    const startIso = toISODate(new Date(s.start_ms));
+    const endIso = toISODate(new Date(s.end_ms));
+    setStart(startIso);
+    setEnd(endIso);
+    setActivePreset(null);
+    setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast.info(`Selected ${startIso} → ${endIso}. Click "Start Import" to re-run.`);
+  }
+
   const progressPct =
     active && active.end_ms > active.start_ms
       ? Math.min(
           100,
-          Math.round(
-            ((active.last_cursor_ms - active.start_ms) / (active.end_ms - active.start_ms)) * 100,
+          Math.max(
+            0,
+            Math.round(
+              ((active.last_cursor_ms - active.start_ms) / (active.end_ms - active.start_ms)) * 100,
+            ),
           ),
         )
       : 0;
@@ -548,6 +585,16 @@ export function HistoricalImportPage() {
                             disabled={busy}
                           >
                             Cancel
+                          </Button>
+                        )}
+                        {(s.status === "complete" || s.status === "cancelled" || s.status === "failed") && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleRerun(s)}
+                            disabled={busy}
+                          >
+                            Re-run
                           </Button>
                         )}
                       </div>

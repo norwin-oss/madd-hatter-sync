@@ -50,9 +50,19 @@ function toDTO(r: BackfillStateRow): BackfillStateDTO {
   };
 }
 
-const dateToMs = (s: string) => {
-  const d = new Date(s);
-  if (isNaN(d.getTime())) throw new Error(`Invalid date: ${s}`);
+const dateToStartMs = (s: string) => {
+  // e.g. "2024-01-01" -> start of day UTC/local
+  const clean = s.trim();
+  const d = new Date(clean.includes("T") ? clean : `${clean}T00:00:00Z`);
+  if (isNaN(d.getTime())) throw new Error(`Invalid start date: ${s}`);
+  return d.getTime();
+};
+
+const dateToEndMs = (s: string) => {
+  // e.g. "2024-01-31" -> end of day 23:59:59.999 UTC so the entire selected day is included
+  const clean = s.trim();
+  const d = new Date(clean.includes("T") ? clean : `${clean}T23:59:59.999Z`);
+  if (isNaN(d.getTime())) throw new Error(`Invalid end date: ${s}`);
   return d.getTime();
 };
 
@@ -69,8 +79,8 @@ export const startBackfillFn = createServerFn({ method: "POST" })
     try {
       const cfg = getIntegrationConfig();
       const merchantId = cfg.clover.merchantId;
-      const startMs = dateToMs(data.startDate);
-      const endMs = dateToMs(data.endDate);
+      const startMs = dateToStartMs(data.startDate);
+      const endMs = dateToEndMs(data.endDate);
       if (endMs < startMs) throw new Error("End date must be after start date.");
 
       const state = await getOrCreateBackfillState(merchantId, startMs, endMs);

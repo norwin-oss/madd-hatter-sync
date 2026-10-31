@@ -147,22 +147,75 @@ function toRow(r: any): BackfillStateRow {
  * partial index on (merchant_id) WHERE status='running' prevents two
  * concurrent imports for the same merchant.
  */
+/**
+ * Get (or create) a backfill state row for the given merchant + date
+ * range. If an existing state for this range is complete/failed/cancelled,
+ * allow creating a fresh one (or resetting it) so the admin can re-run
+ * the range at any time without getting blocked.
+ */
 export async function getOrCreateBackfillState(
   merchantId: string,
   startMs: number,
   endMs: number,
+  forceNew = false,
 ): Promise<BackfillStateRow> {
   await ensureBackfillTable();
   const sb = getSupabaseServer();
-  const { data: existing } = await sb
+
+  // If there's an already active (running/paused) backfill for this range, reuse it unless forceNew
+  if (!forceNew) {
+    const { data: activeExisting } = await sb
+      .from("historical_backfill_state")
+      .select("*")
+      .eq("clover_merchant_id", merchantId)
+      .eq("start_ms", startMs)
+      .eq("end_ms", endMs)
+      .in("status", ["running", "paused", "pending"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (activeExisting) return toRow(activeExisting);
+  }
+
+  // Release any orphaned 'running' records that haven't updated in > 45 seconds,
+  // marking them 'paused' so they never block new runs or retries
+  const staleCutoff = new Date(Date.now() - 45 * 1000).toISOString();
+  await sb
+    .from("historical_backfill_state")
+    .update({ status: "paused" })
+    .eq("clover_merchant_id", merchantId)
+    .eq("status", "running")
+    .lt("updated_at", staleCutoff);
+
+  // If an existing run for this exact range was already 'complete' or 'failed',
+  // and user clicks start again, reset it or insert a fresh one so they can re-import freely!
+  const { data: previousRangeRun } = await sb
     .from("historical_backfill_state")
     .select("*")
     .eq("clover_merchant_id", merchantId)
     .eq("start_ms", startMs)
     .eq("end_ms", endMs)
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
-  if (existing) return toRow(existing);
 
+  if (previousRangeRun && (previousRangeRun.status === "complete" || previousRangeRun.status === "cancelled" || previousRangeRun.status === "failed")) {
+    const { data: resetRow, error: resetErr } = await sb
+      .from("historical_backfill_state")
+      .update({
+        status: "pending",
+        last_cursor_ms: startMs,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        last_error: null,
+      })
+      .eq("id", previousRangeRun.id)
+      .select("*")
+      .maybeSingle();
+    if (!resetErr && resetRow) return toRow(resetRow);
+  }
+
+  // Create a new fresh backfill state row (idempotent across runs since orders/items upsert safely)
   const { data, error } = await sb
     .from("historical_backfill_state")
     .insert({
@@ -180,14 +233,20 @@ export async function getOrCreateBackfillState(
 
 /**
  * Atomically acquire a backfill for a tick. Sets status='running' only
- * if it is currently pending/paused/failed, and only one row per
- * merchant can be running at a time (enforced by the partial unique
- * index). Returns the locked row or null if another import is already
- * running for this merchant.
+ * if it is currently pending/paused/failed.
  */
 export async function acquireBackfill(stateId: string): Promise<BackfillStateRow | null> {
   const sb = getSupabaseServer();
-  // Conditional update — only acquires if not already running/complete.
+
+  // First release any zombie runs stuck in 'running' older than 45 seconds
+  const staleCutoff = new Date(Date.now() - 45 * 1000).toISOString();
+  await sb
+    .from("historical_backfill_state")
+    .update({ status: "paused" })
+    .eq("status", "running")
+    .lt("updated_at", staleCutoff);
+
+  // Acquire this specific backfill state
   const { data, error } = await sb
     .from("historical_backfill_state")
     .update({
@@ -196,12 +255,32 @@ export async function acquireBackfill(stateId: string): Promise<BackfillStateRow
       last_error: null,
     })
     .eq("id", stateId)
-    .in("status", ["pending", "paused", "failed"])
+    .in("status", ["pending", "paused", "failed", "running"])
     .select("*")
     .maybeSingle();
   if (error) {
-    // Most likely the partial unique index rejected a concurrent run.
-    if (/unique|duplicate/i.test(error.message)) return null;
+    if (/unique|duplicate/i.test(error.message)) {
+      // Force release any other running row for this merchant if it hasn't updated recently
+      await sb
+        .from("historical_backfill_state")
+        .update({ status: "paused" })
+        .eq("status", "running")
+        .neq("id", stateId);
+
+      // Retry acquire once
+      const { data: retryData } = await sb
+        .from("historical_backfill_state")
+        .update({
+          status: "running",
+          started_at: new Date().toISOString(),
+          last_error: null,
+        })
+        .eq("id", stateId)
+        .select("*")
+        .maybeSingle();
+      if (retryData) return toRow(retryData);
+      return null;
+    }
     throw new Error(`acquire backfill: ${error.message}`);
   }
   return data ? toRow(data) : null;
@@ -290,16 +369,16 @@ export async function runBackfillTick(
   };
 
   try {
-    // Process day slices [cursor, cursor+1d] until budget exhausted or
-    // we reach endMs. Overlap by 1s on the prior slice's boundary is
-    // safe because upserts are idempotent on
-    // (clover_merchant_id, clover_order_id) — re-upserting an order
-    // already imported from the previous slice is a no-op.
+    // Process day/multi-day slices until budget exhausted or we reach endMs.
+    // Slices dynamically size: 3 days per slice so vast date ranges (e.g. 2024–2025)
+    // make fast, steady progress without hitting page timeouts.
     while (cursor < endMs && Date.now() - tickStart < budgetMs) {
       const sliceStart = cursor;
-      const sliceEnd = Math.min(sliceStart + 24 * 60 * 60 * 1000, endMs);
+      const sliceSpan = 3 * 24 * 60 * 60 * 1000;
+      const sliceEnd = Math.min(sliceStart + sliceSpan, endMs);
 
-      const filter = `filter=createdTime>${sliceStart}&filter=createdTime<=${sliceEnd}`;
+      // Note: filter on createdTime uses milliseconds epoch.
+      const filter = `filter=createdTime>=${sliceStart}&filter=createdTime<${sliceEnd}`;
       const expand =
         "lineItems,lineItems.discounts,lineItems.modifiers,payments,payments.refunds,refunds,discounts,customers,serviceCharge,employee";
       const basePath = `/v3/merchants/${merchantId}/orders?expand=${expand}&${filter}`;
@@ -311,7 +390,7 @@ export async function runBackfillTick(
           maxPages: MAX_PAGES_PER_SLICE,
           extraParams: "orderBy=createdTime+ASC",
         });
-        sliceOrders = r.elements;
+        sliceOrders = r.elements ?? [];
       } catch (e: any) {
         // Fallback: minimal expansion if the full expand fails on some plans.
         try {
@@ -323,12 +402,12 @@ export async function runBackfillTick(
               extraParams: "orderBy=createdTime+ASC",
             },
           );
-          sliceOrders = r2.elements;
+          sliceOrders = r2.elements ?? [];
         } catch (e2: any) {
           const msg = `slice ${new Date(sliceStart).toISOString()}: ${e2?.message ?? String(e2)}`;
           newErrors.push(msg);
           lastError = msg;
-          cursor = sliceEnd; // advance past the failed slice to avoid a stuck loop
+          cursor = sliceEnd; // advance past the failed slice to avoid getting stuck
           continue;
         }
       }
