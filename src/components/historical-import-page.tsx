@@ -245,8 +245,15 @@ export function HistoricalImportPage() {
         await refetch();
         const cur = activeRef.current;
         if (!cur) return;
-        // Only pump when paused (running means a tick is in-flight server-side)
-        if (cur.status === "paused" && !isPumpingRef.current) {
+        // Resume both "paused" AND stale "running" rows. A tick killed by
+        // the Worker CPU ceiling mid-slice leaves the row in "running"
+        // forever; the server acquireBackfill() downgrades stale running
+        // rows (>20s) to "paused" and re-acquires them, so resuming is safe
+        // and never double-runs (the unique partial index on running rows
+        // prevents two concurrent ticks per merchant).
+        const isStaleRunning =
+          cur.status === "running" && Date.now() - new Date(cur.updated_at).getTime() > 20_000;
+        if ((cur.status === "paused" || isStaleRunning) && !isPumpingRef.current) {
           isPumpingRef.current = true;
           try {
             await resumeFn({ data: { stateId: cur.id } });
