@@ -18,6 +18,18 @@ function num(v: any): number {
 
 export async function upsertCustomer(merchantId: string, c: any) {
   const sb = getSupabaseServer();
+  const { error } = await sb.from("customers").upsert(buildCustomerRow(merchantId, c), {
+    onConflict: "clover_merchant_id,clover_customer_id",
+  });
+  if (error) throw new Error(`upsert customer: ${error.message}`);
+}
+
+/**
+ * Build a single customers row from a Clover customer object, without
+ * writing it. Shared by the single-row and bulk upsert paths so the
+ * two paths can never drift in shape.
+ */
+function buildCustomerRow(merchantId: string, c: any) {
   const email =
     c.email ??
     c.emailAddresses?.[0]?.emailAddress ??
@@ -32,19 +44,58 @@ export async function upsertCustomer(merchantId: string, c: any) {
     c.addresses?.elements?.[0]?.phoneNumber ??
     null;
 
-  const { error } = await sb.from("customers").upsert(
-    {
-      clover_merchant_id: merchantId,
-      clover_customer_id: c.id,
-      first_name: c.firstName ?? null,
-      last_name: c.lastName ?? null,
-      email: email ? String(email).trim() : null,
-      phone: phone ? String(phone).trim() : null,
-      marketing_allowed: c.marketingAllowed ?? null,
-    },
-    { onConflict: "clover_merchant_id,clover_customer_id" },
-  );
-  if (error) throw new Error(`upsert customer: ${error.message}`);
+  return {
+    clover_merchant_id: merchantId,
+    clover_customer_id: c.id,
+    first_name: c.firstName ?? null,
+    last_name: c.lastName ?? null,
+    email: email ? String(email).trim() : null,
+    phone: phone ? String(phone).trim() : null,
+    marketing_allowed: c.marketingAllowed ?? null,
+  };
+}
+
+/**
+ * Extract all unique customer objects from a slice of Clover orders and
+ * build customers rows for them. Each order embeds the primary customer
+ * in `order.customer` and may expand additional customers in
+ * `order.customers.elements`. Deduplicates by Clover customer ID so a
+ * customer who placed 5 orders in the same day is upserted once.
+ */
+export function buildCustomerRowsForSlice(merchantId: string, orders: any[]): any[] {
+  const seen = new Set<string>();
+  const rows: any[] = [];
+  for (const order of orders) {
+    const customers: any[] = [];
+    if (order.customer?.id) customers.push(order.customer);
+    if (Array.isArray(order.customers?.elements)) customers.push(...order.customers.elements);
+    if (Array.isArray(order.customers)) customers.push(...order.customers);
+
+    for (const c of customers) {
+      if (!c?.id || seen.has(c.id)) continue;
+      seen.add(c.id);
+      rows.push(buildCustomerRow(merchantId, c));
+    }
+  }
+  return rows;
+}
+
+/**
+ * Bulk-upsert a batch of customer profiles in a single Supabase call.
+ * Chunks internally to stay under Supabase's per-request row ceiling.
+ */
+export async function bulkUpsertCustomers(customerRows: any[], chunkSize = 200): Promise<number> {
+  const sb = getSupabaseServer();
+  let upserted = 0;
+  for (let i = 0; i < customerRows.length; i += chunkSize) {
+    const chunk = customerRows.slice(i, i + chunkSize);
+    const { error } = await sb
+      .from("customers")
+      .upsert(chunk, { onConflict: "clover_merchant_id,clover_customer_id" });
+    if (error) throw new Error(`bulk upsert customers: ${error.message}`);
+    upserted += chunk.length;
+  }
+  return upserted;
 }
 
 export async function upsertCategory(merchantId: string, c: any) {

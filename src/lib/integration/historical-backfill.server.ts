@@ -25,6 +25,8 @@ import {
   bulkUpsertOrders,
   bulkUpsertOrderItems,
   buildOrderItemRowsForSlice,
+  buildCustomerRowsForSlice,
+  bulkUpsertCustomers,
 } from "./pos-upserts.server";
 import { isSetupRequired } from "./config.server";
 
@@ -47,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.historical_backfill_state (
     CHECK (status IN ('pending','running','paused','complete','failed','cancelled')),
   imported_orders integer NOT NULL DEFAULT 0,
   imported_order_items integer NOT NULL DEFAULT 0,
+  imported_customers integer NOT NULL DEFAULT 0,
   skipped_orders integer NOT NULL DEFAULT 0,
   failed_orders integer NOT NULL DEFAULT 0,
   errors text[] NOT NULL DEFAULT '{}',
@@ -56,6 +59,7 @@ CREATE TABLE IF NOT EXISTS public.historical_backfill_state (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.historical_backfill_state ADD COLUMN IF NOT EXISTS imported_customers integer NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_historical_backfill_running
   ON public.historical_backfill_state (clover_merchant_id)
   WHERE status = 'running';
@@ -92,6 +96,7 @@ export type BackfillStateRow = {
   status: BackfillStatus;
   imported_orders: number;
   imported_order_items: number;
+  imported_customers: number;
   skipped_orders: number;
   failed_orders: number;
   errors: string[];
@@ -107,6 +112,7 @@ export type BackfillTickResult = {
   status: BackfillStatus;
   imported_orders: number;
   imported_order_items: number;
+  imported_customers: number;
   skipped_orders: number;
   failed_orders: number;
   errors: string[];
@@ -138,6 +144,7 @@ function toRow(r: any): BackfillStateRow {
     status: r.status,
     imported_orders: r.imported_orders ?? 0,
     imported_order_items: r.imported_order_items ?? 0,
+    imported_customers: r.imported_customers ?? 0,
     skipped_orders: r.skipped_orders ?? 0,
     failed_orders: r.failed_orders ?? 0,
     errors: Array.isArray(r.errors) ? (r.errors as string[]) : [],
@@ -228,6 +235,7 @@ export async function getOrCreateBackfillState(
         last_error: null,
         imported_orders: 0,
         imported_order_items: 0,
+        imported_customers: 0,
         skipped_orders: 0,
         failed_orders: 0,
         errors: [],
@@ -370,6 +378,7 @@ export async function runBackfillTick(
 
   let importedOrders = locked.imported_orders;
   let importedItems = locked.imported_order_items;
+  let importedCustomers = locked.imported_customers;
   let skippedOrders = locked.skipped_orders;
   let failedOrders = locked.failed_orders;
   const newErrors: string[] = [...locked.errors];
@@ -381,6 +390,7 @@ export async function runBackfillTick(
       last_cursor_ms: cursor,
       imported_orders: importedOrders,
       imported_order_items: importedItems,
+      imported_customers: importedCustomers,
       skipped_orders: skippedOrders,
       failed_orders: failedOrders,
       errors: newErrors.slice(-50),
@@ -437,14 +447,26 @@ export async function runBackfillTick(
       }
 
       // Bulk-upsert all orders in this slice in a single Supabase call,
-      // then bulk-upsert all their line items in a single call. This is
-      // ~100x fewer round-trips than one upsert per order/item and is what
-      // makes a 2-year range finish in minutes instead of hours.
+      // then bulk-upsert all their line items in a single call, and
+      // bulk-upsert all their customer profiles in a single call. This is
+      // ~100x fewer round-trips than one upsert per order/item/customer and
+      // is what makes a multi-year range finish in minutes instead of hours.
       if (sliceOrders.length > 0) {
         try {
+          // 1. Upsert customer profiles embedded in the orders first, so
+          //    the customer rows exist before we persist the orders that
+          //    reference them (orders.clover_customer_id FK).
+          const customerRows = buildCustomerRowsForSlice(merchantId, sliceOrders);
+          if (customerRows.length > 0) {
+            const upserted = await bulkUpsertCustomers(customerRows);
+            importedCustomers += upserted;
+          }
+
+          // 2. Bulk-upsert orders.
           const orderMap = await bulkUpsertOrders(merchantId, sliceOrders);
           importedOrders += sliceOrders.length;
 
+          // 3. Bulk-upsert order line items.
           const { rows: itemRows, missingOrderIds } = buildOrderItemRowsForSlice(
             merchantId,
             sliceOrders,
@@ -487,6 +509,7 @@ export async function runBackfillTick(
       status: finalStatus,
       imported_orders: importedOrders,
       imported_order_items: importedItems,
+      imported_customers: importedCustomers,
       skipped_orders: skippedOrders,
       failed_orders: failedOrders,
       errors: newErrors.slice(-20),
@@ -503,6 +526,7 @@ export async function runBackfillTick(
       status: "failed",
       imported_orders: importedOrders,
       imported_order_items: importedItems,
+      imported_customers: importedCustomers,
       skipped_orders: skippedOrders,
       failed_orders: failedOrders,
       errors: newErrors.slice(-20),
